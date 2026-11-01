@@ -1,0 +1,30 @@
+{
+  "name": "@resuto/contracts",
+  "sideEffects": false,
+  "version": "0.1.0",
+  "private": true,
+  "description": "Shared API contracts: Zod schemas, types, permissions, module keys and money helpers.",
+  "type": "commonjs",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" },
+    "./lite": { "types": "./dist/lite.d.ts", "default": "./dist/lite.js" },
+    "./openapi": { "types": "./dist/openapi.d.ts", "default": "./dist/openapi.js" },
+    "./mcp-tools": { "types": "./dist/mcp-tools.d.ts", "default": "./dist/mcp-tools.js" },
+    "./home": { "types": "./dist/home.d.ts", "default": "./dist/home.js" },
+    "./reports": { "types": "./dist/reports.d.ts", "default": "./dist/reports.js" }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "typescript": "5.9.3",
+    "vitest": "3.2.4"
+  }
+}

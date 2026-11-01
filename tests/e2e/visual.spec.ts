@@ -1,0 +1,134 @@
+import type { Locator, Page } from '@playwright/test';
+import { apiCreateTenant, apiQrSheet, apiSaveFloor, apiSeedMenu, expect, matchScreenshot, publishSite, qrPath, seedMenu, setLocale, signIn, test } from './fixtures';
+
+// CR-11: visual-fidelity gate for the restored surfaces. Captures are deterministic: a fixed clock, motion reduced,
+// CSS animations and the caret off, web fonts awaited, and every per-run value (slugs, ids, order numbers, relative
+// times) masked. Baselines live per rendering environment (playwright.config.ts snapshotPathTemplate):
+//   __visual__/local/…   this development container's Chromium and fonts
+//   __visual__/docker/…  the official Playwright image used by CI (.github/workflows/ci.yml, job "visual")
+// so a font or rasteriser difference between machines is never mistaken for a regression. Which baseline was compared
+// side by side with which legacy capture is recorded in docs/ui/visual-baselines.json.
+//
+// Run: E2E_VISUAL=1 pnpm e2e --project=visual   (add --update-snapshots after an approved change)
+
+const FIXED = new Date('2026-10-20T18:30:00+02:00');   // a Tuesday evening in Cairo, inside opening hours
+
+test.describe.configure({ mode: 'serial', timeout: 120_000 });
+
+async function settle(page: Page) {
+  await page.evaluate(() => document.fonts.ready);
+  await page.waitForLoadState('networkidle').catch(() => undefined);
+  await page.waitForFunction(() => !document.querySelector('.skeleton, [aria-busy="true"]'), null, { timeout: 20_000 }).catch(() => undefined);
+  await page.waitForTimeout(300);
+}
+/** Elements whose text changes per run (generated slugs and ids, numbers, clocks). */
+const dynamic = (page: Page) => [page.locator('time'), page.locator('[data-dynamic], [data-visual-mask]'), page.locator('bdi:has-text("#")'),
+  page.getByText(/Measured from current restaurant data|refreshes every/)];
+
+async function shot(page: Page, name: string, opts: { fullPage?: boolean; mask?: Locator[]; style?: string } = {}) {
+  await settle(page);
+  await matchScreenshot(page, `${name}.png`, { fullPage: opts.fullPage ?? false, mask: [...dynamic(page), ...(opts.mask ?? [])], style: opts.style, maxDiffPixelRatio: 0.01 });
+}
+
+/**
+ * The booking page reads today's sittings from the API while the HTML is rendered, so its date strip, the open or
+ * passed state of each sitting and the hold note follow the server's clock, which the browser's fixed clock cannot
+ * reach. Those parts are masked, and the sitting grid and the note get a fixed height, so the capture is the same at any
+ * time of day (the grid becomes "no more sittings today" after the last one).
+ */
+const bookingClock = (page: Page) => ({
+  mask: [page.locator('.bk-days, .bk-slots, .bk-empty, .bk-note, .bk-label b, .bk-step-title small')],
+  style: '.bk-slots, .bk-empty { block-size: 168px !important; overflow: hidden !important; } .bk-note { block-size: 1.6em; overflow: hidden; }',
+});
+
+test.beforeEach(async ({ page }) => {
+  await page.clock.setFixedTime(FIXED);
+});
+
+test.describe('public surfaces', () => {
+  for (const [name, path, locale, mobile] of [
+    ['landing-en-desktop', '/', 'en', false], ['landing-ar-mobile', '/', 'ar', true],
+    ['pricing-en-desktop', '/pricing', 'en', false], ['login-en-desktop', '/login', 'en', false],
+  ] as const) {
+    test(name, async ({ page }) => {
+      if (mobile) await page.setViewportSize({ width: 390, height: 844 });
+      await setLocale(page, locale);
+      await page.goto(path);
+      await shot(page, name);
+    });
+  }
+});
+
+test.describe('restaurant and guest surfaces', () => {
+  test('restaurant site, web order, reserve and the QR table menu', async ({ page, request }) => {
+    const tenant = await apiCreateTenant(request);
+    const products = await seedMenu(tenant);
+    await publishSite(request, tenant, { productIds: products });
+    await apiSaveFloor(request, tenant);
+    const qr = qrPath((await apiQrSheet(request, tenant)).find((x) => x.label === 'T1')!.url);
+
+    await page.goto(`/r/${tenant.slug}`);
+    await shot(page, 'restaurant-en-desktop');
+    await page.setViewportSize({ width: 390, height: 844 });
+    await setLocale(page, 'ar');
+    await page.goto(`/r/${tenant.slug}`);
+    await shot(page, 'restaurant-ar-mobile');
+    await setLocale(page, 'en');
+    await page.goto(`/order/${tenant.slug}`);
+    await shot(page, 'order-en-mobile');
+    await page.goto(`/reserve/${tenant.slug}`);
+    await shot(page, 'reserve-en-mobile', bookingClock(page));
+    await page.goto(qr);
+    await shot(page, 'table-menu-en-mobile');
+  });
+});
+
+test.describe('staff surfaces', () => {
+  test('overview, floor, kitchen display, orders and settings', async ({ page, request }) => {
+    const tenant = await apiCreateTenant(request);
+    await apiSeedMenu(request, tenant);
+    await apiSaveFloor(request, tenant);
+    await signIn(page, tenant.owner);
+    const d = `/dashboard/${tenant.orgId}`;
+    for (const [name, path] of [
+      ['staff-overview-en', d], ['staff-floor-en', `${d}/floor?tab=live`], ['staff-orders-en', `${d}/orders`],
+      ['staff-settings-en', `${d}/settings`], ['kds-en', `/kitchen/${tenant.orgId}`],
+    ] as const) {
+      await page.goto(path);
+      await shot(page, name);
+    }
+  });
+});
+
+// 21-MIGRATE: the 2.1 staff screens on the page templates, in Arabic (RTL) and at phone width as well, so the
+// EN/AR × desktop/phone matrix covers the key staff areas (overview, menu, orders, inbox, customers, payments,
+// marketing, loyalty, MCP, settings).
+test.describe('staff surfaces in Arabic and at phone width', () => {
+  test('overview, menu, inbox, customers, payments, marketing, loyalty, MCP and settings', async ({ page, request }) => {
+    const tenant = await apiCreateTenant(request, { planId: 'pro' });
+    await apiSeedMenu(request, tenant);
+    await apiSaveFloor(request, tenant);
+    const d = `/dashboard/${tenant.orgId}`;
+    const desktop: Array<[string, string, 'en' | 'ar']> = [
+      ['staff-overview-ar', d, 'ar'], ['staff-menu-en', `${d}/menu`, 'en'], ['staff-menu-ar', `${d}/menu`, 'ar'],
+      ['staff-inbox-en', `${d}/inbox`, 'en'], ['staff-customers-en', `${d}/customers`, 'en'], ['staff-payments-en', `${d}/payments`, 'en'],
+      ['staff-marketing-en', `${d}/marketing`, 'en'], ['staff-loyalty-ar', `${d}/loyalty`, 'ar'], ['staff-mcp-en', `${d}/mcp`, 'en'],
+      ['staff-settings-ar', `${d}/settings`, 'ar'],
+    ];
+    const phone: Array<[string, string, 'en' | 'ar']> = [
+      ['staff-overview-en-mobile', d, 'en'], ['staff-overview-ar-mobile', d, 'ar'], ['staff-orders-ar-mobile', `${d}/orders`, 'ar'],
+      ['staff-customers-ar-mobile', `${d}/customers`, 'ar'], ['staff-marketing-ar-mobile', `${d}/marketing`, 'ar'],
+    ];
+    let signedIn: 'en' | 'ar' | null = null;
+    for (const [list, mobile] of [[desktop, false], [phone, true]] as const) {
+      if (mobile) await page.setViewportSize({ width: 390, height: 844 });
+      for (const [name, path, locale] of list) {
+        if (signedIn === null) { await signIn(page, tenant.owner, locale); signedIn = locale; }
+        else if (signedIn !== locale) { await setLocale(page, locale); signedIn = locale; }
+        await page.goto(path);
+        await expect(page.locator('h1').first()).toBeVisible({ timeout: 20_000 });
+        await shot(page, name);
+      }
+    }
+  });
+});

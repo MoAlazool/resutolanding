@@ -1,0 +1,30 @@
+node_modules/
+.env
+.env.*
+!.env.example
+dist/
+.next/
+# a .next symlinked to tmpfs in a worktree (a trailing-slash pattern does not match a symlink)
+.next
+.turbo/
+coverage/
+.local/
+*.tsbuildinfo
+__pycache__/
+.venv/
+.pytest_cache/
+test-results/
+playwright-report/
+apps/ai-service/artifacts/runs/
+.DS_Store
+.claude/
+~$*
+reports/
+
+# symlinked virtualenvs in worktrees (a trailing-slash pattern does not match a symlink)
+.venv
+# Local legacy comparison instance data (scripts/ui, workstream screenshots)
+.legacy-*.json*
+
+# Workstream-local dev env, logs and storage (never committed)
+.local-*/

@@ -1,0 +1,24 @@
+/* CRM, growth and funnels (21-CRM): funnel table and the segment builder (the cohort heatmap is in the chart kit). Logical properties only. */
+.crm-title { margin: 0 0 4px; font-size: 18px; }
+.crm-count { display: inline-flex; flex-wrap: wrap; gap: 4px; justify-content: flex-end; align-items: baseline; }
+.crm-measured { flex-basis: 100%; text-align: end; }
+.crm-source code { font-size: var(--fs-sm); white-space: normal; overflow-wrap: anywhere; color: var(--text-muted); }
+.crm-notes { margin: 4px 0 0; padding-inline-start: 18px; font-size: var(--fs-sm); color: var(--text-muted); }
+
+.crm-seg .card { display: grid; gap: 12px; }
+.crm-seg-group { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; margin: 0; min-inline-size: 0; display: grid; gap: 8px; }
+.crm-seg-group[data-depth='2'] { background: var(--surface-2); }
+.crm-seg-group[data-depth='3'] { border-style: dashed; }
+.crm-seg-legend { display: inline-flex; gap: 8px; align-items: center; padding-inline: 4px; font-weight: 600; }
+.crm-seg-op { inline-size: auto; min-block-size: 34px; }
+.crm-seg-rules { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.crm-seg-rule { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-end; padding-block-end: 8px; border-block-end: 1px solid var(--line-soft); }
+.crm-seg-rule > .field { flex: 1 1 160px; min-inline-size: 0; margin: 0; }
+.crm-seg-rule[data-invalid] { border-block-end-color: var(--danger); }
+.crm-seg-remove { margin-block-end: 4px; }
+.crm-seg-count { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; min-block-size: 28px; }
+.crm-seg-save { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-end; }
+.crm-seg-save > .field { flex: 1 1 200px; margin: 0; }
+@media (max-width: 640px) {
+  .crm-seg-rule > .field { flex-basis: 100%; }
+}

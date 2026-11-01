@@ -1,0 +1,111 @@
+'use client';
+import { useSearchParams } from 'next/navigation';
+import { Suspense, useMemo, useState } from 'react';
+import { assignableRoles, MCP_ACTING_ROLES, MCP_GROUPS, mcpToolsFor, type Role } from '@resuto/contracts';
+import { Badge, Card, DetailPage, KeyValueList, Notice, useAction } from '@resuto/ui';
+import { ModuleGate } from '@/components/shell/ModuleGate';
+import { dateTime } from '@/lib/format';
+import { useT } from '@/lib/i18n/client';
+import { useOrg } from '@/lib/org-context';
+import { useSession } from '@/lib/session';
+import { clearOAuthDraft, readOAuthDraft } from '@/lib/mcp-wizard';
+import { useApi } from '@/lib/use-api';
+import { endOfDayIso, LoadState, ScopeForm, type CatalogTool, type ScopeValue } from '../_components/shared';
+import st from '../_components/mcp.module.css';
+
+interface OAuthRequest {
+  id: string; status: 'pending' | 'approved' | 'denied' | 'expired'; clientName: string; clientId: string; clientKind: 'dynamic' | 'metadata_document';
+  clientUri: string | null; redirectHost: string; redirectUri: string; loopbackRedirect: boolean; scopes: string[]; tools: string[];
+  resource: string; expiresAt: string;
+}
+
+/**
+ * OAuth consent for an MCP client (FT-17): the admin sees who asks, where the browser goes back to (the redirect host,
+ * as the MCP spec requires), what is asked, and chooses the role, branches and tools, exactly like a connection key.
+ */
+function Consent() {
+  const { t, locale } = useT();
+  const { org } = useOrg();
+  const session = useSession();
+  const request = useSearchParams().get('request') ?? '';
+  const req = useApi<OAuthRequest>(/^[0-9a-f-]{36}$/i.test(request) ? `/mcp/oauth/requests/${request}` : null, { staleMs: 0 });
+  const catalog = useApi<{ items: CatalogTool[] }>(`/o/${org.id}/mcp/catalog`);
+  const [leaving, setLeaving] = useState<string | null>(null);
+  const roles = assignableRoles(org.role).filter((r) => (MCP_ACTING_ROLES as readonly string[]).includes(r));
+  const defaultRole: Role = roles.includes('manager') ? 'manager' : roles[0] ?? 'manager';
+  // 21-MCP: settings chosen in the connection wizard of this browser (groups, branches, stricter approval, expiry).
+  const draft = useMemo(() => readOAuthDraft(org.id), [org.id]);
+  const wizard = draft && roles.includes(draft.state.actingRole) ? draft.state : null;
+
+  const approve = useAction(async (v: ScopeValue) => {
+    const r = await session.call<{ redirectTo: string }>(`/o/${org.id}/mcp/oauth/requests/${request}/approve`, {
+      body: { name: v.name, actingRole: v.actingRole, branchIds: v.branchIds, allowedTools: v.allowedTools, rateLimitPerMin: v.rateLimitPerMin,
+        expiresAt: endOfDayIso(v.expiresOn), ...(wizard ? { groups: wizard.groups, policyOverrides: wizard.overrides } : {}) },
+    });
+    if (wizard) clearOAuthDraft(org.id);
+    setLeaving(req.data?.redirectHost ?? '');
+    window.location.assign(r.redirectTo);
+  });
+  const deny = useAction(async () => {
+    const r = await session.call<{ redirectTo: string }>(`/mcp/oauth/requests/${request}/deny`, { body: {} });
+    setLeaving(req.data?.redirectHost ?? '');
+    window.location.assign(r.redirectTo);
+  });
+
+  const d = req.data;
+  const permitted = (catalog.data?.items ?? []).filter((x) => d?.tools.includes(x.name));
+  return (
+    <ModuleGate module="mcp" permission="mcp:manage">
+      <div className={st.frame}>
+        <DetailPage header={{ eyebrow: 'ResutoMCP', title: t('mcp.oauth.title'), subtitle: t('mcp.oauth.subtitle') }}>
+        <LoadState loading={(req.loading && !d) || (catalog.loading && !catalog.data)} error={req.error ?? catalog.error} retry={req.reload}>
+          {d && d.status !== 'pending' ? <Notice tone="warn">{t(`mcp.oauth.closed.${d.status}`)}</Notice> : d && (
+            <div className="stack gap-16">
+              <Card warm>
+                <div className="stack gap-12">
+                  <p className={st.lead}>{t('mcp.oauth.asks', { client: d.clientName, org: org.name })}</p>
+                  <KeyValueList items={[
+                    { key: 'return', label: t('mcp.oauth.returnTo'), value: <strong><bdi dir="ltr">{d.redirectHost}</bdi></strong> },
+                    { key: 'kind', label: t('mcp.oauth.clientKind'), value: d.clientKind === 'metadata_document'
+                      ? <span>{t('mcp.oauth.kind.metadata')} <bdi dir="ltr" className="fine">{d.clientId}</bdi></span> : t('mcp.oauth.kind.dynamic') },
+                    { key: 'scopes', label: t('mcp.oauth.scopes'), value: <span className="row gap-6">{d.scopes.map((s) => <Badge key={s} tone={s === 'mcp:act' ? 'warn' : 'ok'}>{t(`mcp.oauth.scope.${s}`)}</Badge>)}</span> },
+                    { key: 'expires', label: t('mcp.oauth.expires'), value: dateTime(d.expiresAt, locale, org.timezone) },
+                  ]} />
+                  {d.loopbackRedirect && <Notice tone="warn">{t('mcp.oauth.loopback')}</Notice>}
+                  <p className="fine m-0">{t('mcp.oauth.howItWorks')}</p>
+                </div>
+              </Card>
+              {leaving !== null ? <Notice tone="info">{t('mcp.oauth.leaving', { host: leaving })}</Notice> : (
+                <>
+                  {wizard && (
+                    <Notice tone="info">{t('mcp.wizard.oauthDraft', { groups: wizard.groups.map((g) => (locale === 'ar' ? MCP_GROUPS[g].titleAr : MCP_GROUPS[g].title))
+                      .join(locale === 'ar' ? '، ' : ', ') })}</Notice>
+                  )}
+                  <ScopeForm
+                    catalog={permitted}
+                    initial={wizard ? {
+                      name: (wizard.name || d.clientName).slice(0, 80), actingRole: wizard.actingRole, branchIds: wizard.branchIds,
+                      allowedTools: mcpToolsFor(wizard.groups, wizard.actingRole, wizard.advancedTools)
+                        .filter((n) => permitted.some((x) => x.name === n && x.entitled)),
+                      rateLimitPerMin: wizard.rateLimitPerMin, expiresOn: wizard.expiresOn,
+                    } : { name: d.clientName.slice(0, 80), actingRole: defaultRole, branchIds: null,
+                      allowedTools: permitted.filter((x) => x.readOnly && x.entitled).map((x) => x.name), rateLimitPerMin: 60, expiresOn: '' }}
+                    submitLabel={t('mcp.oauth.allow')} pending={approve.pending} error={approve.error} onSubmit={(v) => void approve.run(v)} />
+                  <div className="row justify-end">
+                    <button type="button" className="btn btn-ghost" disabled={deny.pending} onClick={() => void deny.run()}>{t('mcp.oauth.deny')}</button>
+                  </div>
+                  {deny.error && <Notice tone="danger">{deny.error}</Notice>}
+                </>
+              )}
+            </div>
+          )}
+        </LoadState>
+        </DetailPage>
+      </div>
+    </ModuleGate>
+  );
+}
+
+export default function McpConsentPage() {
+  return <Suspense fallback={null}><Consent /></Suspense>;
+}
